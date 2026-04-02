@@ -1,0 +1,137 @@
+# Originally from https://github.com/Pomdap/gb-studio-ci-example by Pomdap
+# Licensed under CC0 1.0 Universal (public domain) — see LICENSE
+# Configuration: set ITCH_IO_USERNAME and ITCH_IO_GAME as GitHub repository variables,
+# and ITCH_IO_API_KEY as a repository secret. See .env.example for the full list.
+name: Itch.io release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  TARGET_LIST: 'rom, pocket, web'
+  ITCH_IO_USERNAME: ${{ vars.ITCH_IO_USERNAME }}
+  ITCH_IO_GAME: ${{ vars.ITCH_IO_GAME }}
+  UPLOAD_SOURCE: true
+
+jobs:
+  set-target-list:
+    runs-on: ubuntu-latest
+    outputs:
+      target-list: ${{ steps.set-target-list.outputs.target-list }}
+    steps:
+      - id: set-target-list
+        run: echo "target-list=${TARGET_LIST}" >> "$GITHUB_OUTPUT"
+
+  validate-targets:
+    name: Validate target list
+    needs: set-target-list
+    uses: ./.github/workflows/utility-validate-target-list.yml
+    with:
+      target-list: ${{ needs.set-target-list.outputs.target-list }}
+    secrets: inherit
+
+  extract-project-configuration:
+    name: Extract project configuration
+    uses: ./.github/workflows/utility-extract-project-configuration.yml
+    secrets: inherit
+
+  build-ci-image:
+    name: Build CI image
+    needs: extract-project-configuration
+    uses: ./.github/workflows/build-ci-image.yml
+    with:
+      gb-studio-version: ${{ needs.extract-project-configuration.outputs.project-version }}
+    secrets: inherit
+    permissions:
+      contents: read
+      packages: write
+
+  build-targets:
+    name: 'Build ${{ matrix.target }}'
+    needs: [extract-project-configuration, validate-targets, build-ci-image]
+    uses: ./.github/workflows/utility-build-and-upload-artifact.yml
+    strategy:
+      matrix:
+        target: ${{ fromJson(needs.validate-targets.outputs.matrix) }}
+    with:
+      target: '${{ matrix.target }}'
+      project-filepath: '${{ needs.extract-project-configuration.outputs.project-filepath }}'
+      project-version: '${{ needs.extract-project-configuration.outputs.project-version }}'
+      artefact-name: >-
+        ${{ matrix.target == 'rom' && format('{0}.{1}', needs.extract-project-configuration.outputs.project-name, needs.extract-project-configuration.outputs.rom-extension)
+        || format('{0}.{1}', needs.extract-project-configuration.outputs.project-name, matrix.target) }}
+    secrets: inherit
+
+  deploy-to-itchio:
+    name: Deploy All Targets to Itch.io
+    needs: [extract-project-configuration, build-targets]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        if: env.UPLOAD_SOURCE == 'true'
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Prepare upload directory
+        run: mkdir -p upload
+
+      - name: Zip artifacts
+        run: |
+          for artifact in dist/*/; do
+            artifact_name=$(basename "$artifact")
+            zip -r "upload/${artifact_name}.zip" "$artifact"
+          done
+
+      - name: Create source code archive (optional)
+        if: env.UPLOAD_SOURCE == 'true'
+        run: |
+          mkdir -p upload
+          TAG_NAME=${GITHUB_REF#refs/tags/}
+          git archive --format zip --output "upload/${{ needs.extract-project-configuration.outputs.project-name }}.source.zip" $TAG_NAME
+
+      - name: Display upload content
+        run: ls -lh upload
+
+      - name: Install butler
+        run: |
+          curl -L -o butler.zip https://broth.itch.ovh/butler/linux-amd64/LATEST/archive/default
+          unzip butler.zip
+          chmod +x butler
+          sudo mv butler /usr/local/bin/
+          butler -V
+
+      - name: Deploy artifacts to Itch.io
+        env:
+          BUTLER_API_KEY: ${{ secrets.ITCH_IO_API_KEY }}
+        run: |
+          TAG_NAME=${GITHUB_REF#refs/tags/}
+
+          cd upload
+
+          for artifact in *.zip; do
+            base=$(basename "$artifact" .zip)
+
+            channel="rom"
+
+            case "$base" in
+              *.pocket) channel="pocket" ;;
+              *.web) channel="web" ;;
+              *.source)
+                if [ "${UPLOAD_SOURCE}" != "true" ]; then
+                  continue
+                fi
+                channel="source"
+                ;;
+            esac
+
+            butler push "$artifact" "$ITCH_IO_USERNAME/$ITCH_IO_GAME:$channel" --userversion "$TAG_NAME"
+          done

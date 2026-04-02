@@ -1,0 +1,16 @@
+{
+  "name": "GB Studio",
+  "image": "mcr.microsoft.com/devcontainers/base:noble",
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {}
+  },
+  "forwardPorts": [6080],
+  "portsAttributes": {
+    "6080": {
+      "label": "GB Studio (noVNC)",
+      "onAutoForward": "openBrowser"
+    }
+  },
+  "onCreateCommand": "bash .devcontainer/setup.sh",
+  "remoteUser": "vscode"
+}

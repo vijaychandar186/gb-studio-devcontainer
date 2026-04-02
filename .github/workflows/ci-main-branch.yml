@@ -1,0 +1,62 @@
+# Originally from https://github.com/Pomdap/gb-studio-ci-example by Pomdap
+# Licensed under CC0 1.0 Universal (public domain) — see LICENSE
+name: Main branch CI
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+env:
+  TARGET_LIST: 'rom, pocket, web'
+
+jobs:
+  set-target-list:
+    runs-on: ubuntu-latest
+    outputs:
+      target-list: ${{ steps.set-target-list.outputs.target-list }}
+    steps:
+      - id: set-target-list
+        run: echo "target-list=${TARGET_LIST}" >> "$GITHUB_OUTPUT"
+
+  validate-targets:
+    name: Validate target list
+    needs: set-target-list
+    uses: ./.github/workflows/utility-validate-target-list.yml
+    with:
+      target-list: ${{ needs.set-target-list.outputs.target-list }}
+    secrets: inherit
+
+  extract-project-configuration:
+    name: Extract project configuration
+    uses: ./.github/workflows/utility-extract-project-configuration.yml
+    secrets: inherit
+
+  build-ci-image:
+    name: Build CI image
+    needs: extract-project-configuration
+    uses: ./.github/workflows/build-ci-image.yml
+    with:
+      gb-studio-version: ${{ needs.extract-project-configuration.outputs.project-version }}
+    secrets: inherit
+    permissions:
+      contents: read
+      packages: write
+
+  build-targets:
+    name: 'Build ${{ matrix.target }}'
+    needs: [extract-project-configuration, validate-targets, build-ci-image]
+    uses: ./.github/workflows/utility-build-and-upload-artifact.yml
+    strategy:
+      matrix:
+        target: ${{ fromJson(needs.validate-targets.outputs.matrix) }}
+    with:
+      target: '${{ matrix.target }}'
+      project-filepath: '${{ needs.extract-project-configuration.outputs.project-filepath }}'
+      project-version: '${{ needs.extract-project-configuration.outputs.project-version }}'
+      artefact-name: >-
+        ${{ matrix.target == 'rom' && format('{0}.{1}', needs.extract-project-configuration.outputs.project-name, needs.extract-project-configuration.outputs.rom-extension)
+        || format('{0}.{1}', needs.extract-project-configuration.outputs.project-name, matrix.target) }}
+    secrets: inherit

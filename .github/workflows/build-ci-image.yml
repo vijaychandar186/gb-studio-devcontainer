@@ -1,0 +1,71 @@
+# Originally from https://github.com/Pomdap/gb-studio-ci by Pomdap
+# Licensed under CC0 1.0 Universal (public domain) — see LICENSE
+name: Build and push CI image
+
+on:
+  workflow_dispatch:
+    inputs:
+      gb-studio-version:
+        description: 'GB Studio version to build (e.g. 4.2.2). Defaults to version in project file.'
+        required: false
+        type: string
+  workflow_call:
+    inputs:
+      gb-studio-version:
+        description: 'GB Studio version to build (e.g. 4.2.2). Defaults to version in project file.'
+        required: false
+        type: string
+        default: ''
+  push:
+    paths:
+      - 'Dockerfile'
+    branches: [ main, master ]
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Detect GB Studio version
+        id: version
+        run: |
+          input_version="${{ inputs.gb-studio-version }}"
+          if [ -n "$input_version" ]; then
+            version="$input_version"
+          else
+            version=$(find . -name "*.gbsproj" | head -1 | xargs jq -r '._version')
+          fi
+          echo "✅ Building for GB Studio v$version"
+          echo "version=$version" >> $GITHUB_OUTPUT
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check if image already exists
+        id: check
+        run: |
+          if docker manifest inspect ghcr.io/${{ github.repository_owner }}/gb-studio-ci:${{ steps.version.outputs.version }} > /dev/null 2>&1; then
+            echo "✅ Image already exists, skipping build"
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "🔨 Image not found, will build"
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build and push
+        if: steps.check.outputs.exists == 'false'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/gb-studio-ci:${{ steps.version.outputs.version }}
+          build-args: BRANCH=v${{ steps.version.outputs.version }}

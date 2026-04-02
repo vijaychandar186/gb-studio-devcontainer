@@ -1,0 +1,4 @@
+# Ignore everything except the Dockerfile itself
+# The Docker build clones GB Studio from GitHub — no local files are needed
+*
+!Dockerfile

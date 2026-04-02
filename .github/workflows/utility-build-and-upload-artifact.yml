@@ -1,0 +1,87 @@
+# Originally from https://github.com/Pomdap/gb-studio-ci-example by Pomdap
+# Licensed under CC0 1.0 Universal (public domain) — see LICENSE
+name: Build and upload artifact
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Build target (rom|pocket|web)'
+        required: true
+        type: string
+      project-filepath:
+        description: 'Path of the gbsproj file to build-and-upload (e.g., "./my-game/my-game.gbsproj")'
+        required: true
+        type: string
+      project-version:
+        description: 'GB Studio version to use (e.g., "4.2.2")'
+        required: true
+        type: string
+        default: latest
+      artefact-name:
+        description: 'Name of the artefact to upload'
+        required: true
+        type: string
+        default: game
+  workflow_call:
+    inputs:
+      target:
+        description: 'Build target (rom|pocket|web)'
+        required: true
+        type: string
+      project-filepath:
+        description: 'Path of the gbsproj file to build (e.g., "./my-game/my-game.gbsproj")'
+        required: true
+        type: string
+      project-version:
+        description: 'GB Studio version to use (e.g., "4.2.2")'
+        required: true
+        type: string
+        default: latest
+      artefact-name:
+        description: 'Name of the artefact to upload'
+        required: true
+        type: string
+        default: game
+    outputs:
+      artifact-id:
+        value: ${{ jobs.build-and-upload.outputs.artifact-id }}
+      artifact-url:
+        value: ${{ jobs.build-and-upload.outputs.artifact-url }}
+      artifact-digest:
+        value: ${{ jobs.build-and-upload.outputs.artifact-digest }}
+
+jobs:
+  build-and-upload:
+    outputs:
+      artifact-id: ${{ steps.upload-artifact.outputs.artifact-id }}
+      artifact-url: ${{ steps.upload-artifact.outputs.artifact-url }}
+      artifact-digest: ${{ steps.upload-artifact.outputs.artifact-digest }}
+    name: Build ${{ inputs.target }} target and upload artifact
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/${{ github.repository_owner }}/gb-studio-ci:${{ inputs.project-version }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v4
+
+      - name: Validate target input
+        run: |
+          case "${{ inputs.target }}" in
+            rom|pocket|web) echo "ℹ️ Target '${{ inputs.target }}' is valid." ;;
+            *) echo "❌ Invalid target: '${{ inputs.target }}'. Must be one of: rom, pocket, web"; exit 1 ;;
+          esac
+
+      - name: Make ${{ inputs.target }}
+        run: |
+          gb-studio-cli make:${{ inputs.target }} "${{ inputs.project-filepath }}" "build/${{ inputs.artefact-name }}"
+
+      - name: Upload artifact
+        id: upload-artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artefact-name }}
+          path: "build/${{ inputs.artefact-name }}"

@@ -1,0 +1,77 @@
+# Originally from https://github.com/Pomdap/gb-studio-ci-example by Pomdap
+# Licensed under CC0 1.0 Universal (public domain) — see LICENSE
+name: Validate target list and generate matrix
+
+on:
+  workflow_call:
+    inputs:
+      target-list:
+        description: 'Comma-separated list of targets to validate (e.g., "rom, pocket, web")'
+        required: true
+        type: string
+    outputs:
+      matrix:
+        description: 'Validated matrix for use in strategy.matrix'
+        value: ${{ jobs.validate-targets.outputs.matrix }}
+
+env:
+  ALLOWED_TARGETS: 'rom, pocket, web'
+
+jobs:
+  validate-targets:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.generate-matrix.outputs.matrix }}
+
+    steps:
+      - name: Validate and generate matrix
+        id: generate-matrix
+        run: |
+          echo "🔍 Input targets: '${{ inputs.target-list }}'"
+          echo "📌 Allowed targets: '$ALLOWED_TARGETS'"
+
+          # Convert to arrays
+          IFS=',' read -ra ALLOWED <<< "$ALLOWED_TARGETS"
+          IFS=',' read -ra INPUT <<< "${{ inputs.target-list }}"
+
+          # Create lookup for allowed targets
+          declare -A ALLOWED_MAP
+          for a in "${ALLOWED[@]}"; do
+            key=$(echo "$a" | xargs)
+            ALLOWED_MAP[$key]=1
+          done
+
+          declare -A UNIQUE_TARGETS=()
+          VALID_TARGETS=()
+          INVALID_TARGETS=()
+
+          for raw in "${INPUT[@]}"; do
+            target=$(echo "$raw" | xargs)
+            if [[ -z "$target" ]]; then continue; fi
+
+            if [[ -n "${ALLOWED_MAP[$target]}" ]]; then
+              if [[ -z "${UNIQUE_TARGETS[$target]}" ]]; then
+                VALID_TARGETS+=("\"$target\"")
+                UNIQUE_TARGETS[$target]=1
+              fi
+            else
+              INVALID_TARGETS+=("$target")
+            fi
+          done
+
+          if [ ${#VALID_TARGETS[@]} -eq 0 ]; then
+            echo "❌ No valid targets found in input"
+            exit 1
+          fi
+
+          if [ ${#INVALID_TARGETS[@]} -gt 0 ]; then
+            invalid_targets=$(printf ", %s" "${INVALID_TARGETS[@]}")
+            invalid_targets="${invalid_targets:2}"
+            echo "⚠️ The following targets are invalid and will be ignored: $invalid_targets"
+          fi
+
+          MATRIX_JSON="[${VALID_TARGETS[*]}]"
+          MATRIX_JSON=$(echo "$MATRIX_JSON" | sed 's/ /, /g')
+
+          echo "✅ Validated matrix: $MATRIX_JSON"
+          echo "matrix=$MATRIX_JSON" >> $GITHUB_OUTPUT

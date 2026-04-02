@@ -1,0 +1,165 @@
+# Originally from https://github.com/Pomdap/gb-studio-ci-example by Pomdap
+# Licensed under CC0 1.0 Universal (public domain) — see LICENSE
+name: Extract project configuration
+
+on:
+  workflow_dispatch:
+    inputs:
+      project-filepath:
+        description: 'Optional project filepath'
+        required: false
+        type: string
+        default: ""
+      project-version:
+        description: 'Optional project version'
+        required: false
+        type: string
+        default: ""
+      project-name:
+        description: 'Optional project name'
+        required: false
+        type: string
+        default: ""
+      rom-extension:
+        description: 'Optional ROM extension (gb|gbc)'
+        required: false
+        type: string
+        default: ""
+
+  workflow_call:
+    inputs:
+      project-filepath:
+        description: 'Optional project filepath'
+        required: false
+        type: string
+        default: ""
+      project-version:
+        description: 'Optional project version'
+        required: false
+        type: string
+        default: ""
+      project-name:
+        description: 'Optional project name'
+        required: false
+        type: string
+        default: ""
+      rom-extension:
+        description: 'Optional ROM extension (gb|gbc)'
+        required: false
+        type: string
+        default: ""
+    outputs:
+      project-filepath:
+        value: ${{ jobs.extract-project-configuration.outputs.project-filepath }}
+      project-version:
+        value: ${{ jobs.extract-project-configuration.outputs.project-version }}
+      project-name:
+        value: ${{ jobs.extract-project-configuration.outputs.project-name }}
+      rom-extension:
+        value: ${{ jobs.extract-project-configuration.outputs.rom-extension }}
+
+jobs:
+  extract-project-configuration:
+    name: Extract values from source code
+    runs-on: ubuntu-latest
+    outputs:
+      project-filepath: ${{ steps.extract-configuration.outputs.project-filepath }}
+      project-version: ${{ steps.extract-configuration.outputs.project-version }}
+      project-name: ${{ steps.extract-configuration.outputs.project-name }}
+      rom-extension: ${{ steps.extract-configuration.outputs.rom-extension }}
+    steps:
+      - name: Checkout code if needed
+        if: ${{ inputs.project-filepath == '' || inputs.project-version == '' || inputs.project-name == '' || inputs.rom-extension == '' }}
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            **/*.gbsproj
+            **/project/settings.gbsres
+          sparse-checkout-cone-mode: false
+
+      - name: Get project filepath, version, name and color mode
+        id: extract-configuration
+        run: |
+          project_filepath="${{ inputs.project-filepath }}"
+          project_version="${{ inputs.project-version }}"
+          project_name="${{ inputs.project-name }}"
+          rom_extension="${{ inputs.rom-extension }}"
+
+          if [ -z "$project_filepath" ]; then
+            project_filepath=$(find . -name "*.gbsproj")
+            if [ -z "$project_filepath" ]; then
+              echo "❌ No .gbsproj file found in the repository and no input value provided"
+              exit 1
+            fi
+          fi
+
+          if [ -z "$rom_extension" ]; then
+            project_settings_filepath=$(find . -name "settings.gbsres" -path "*/project/settings.gbsres" 2>/dev/null | head -1 || echo "")
+
+            if [ -z "$project_settings_filepath" ]; then
+              echo "ℹ️ File settings.gbsres not found, trying to read color mode from $project_filepath"
+              color_mode=$(jq -r '.colorMode' "$project_filepath")
+            else
+              color_mode=$(jq -r '.colorMode' "$project_settings_filepath")
+            fi
+
+            custom_colors_enabled=$(jq -r '.settings.customColorsEnabled' "$project_filepath")
+
+            rom_extension=$(
+              case "$color_mode" in
+                "color")
+                  echo "gbc"
+                  ;;
+                "mixed"|"mono")
+                  echo "gb"
+                  ;;
+                *)
+                  case "$custom_colors_enabled" in
+                    "true")
+                      echo "gbc"
+                      ;;
+                    "false")
+                      echo "gb"
+                      ;;
+                    *)
+                      echo "⚠️ Unexpected or missing value for color mode, defaulting to 'gb'" >&2
+                      echo "gb"
+                      ;;
+                  esac
+                  ;;
+              esac
+            )
+          fi
+
+          if [ -z "$rom_extension" ] || { [ "$rom_extension" != "gb" ] && [ "$rom_extension" != "gbc" ]; }; then
+              echo "❌ Failed to determine a valid ROM extension, expected 'gb' or 'gbc'"
+              exit 1
+          fi
+
+          # Fallback for project version
+          if [ -z "$project_version" ]; then
+            project_version=$(jq -r '._version // empty' "$project_filepath" )
+            if [ -z "$project_version" ]; then
+              echo "❌ Could not extract project version from $project_filepath"
+              exit 1
+            fi
+          fi
+
+          if [ -z "$project_name" ]; then
+            project_name=$(jq -r '.name // empty' "$project_filepath")
+            if [ -z "$project_name" ]; then
+              echo "❌ Could not extract project name from $project_filepath"
+              exit 1
+            fi
+          fi
+
+          echo "✅ Success - Extracted configuration:"
+          echo " ├ 📂 Project filepath: $project_filepath"
+          echo " ├ 📦 Version: $project_version"
+          echo " ├ 📝 Name: $project_name"
+          echo " └ 🎮 ROM extension: $rom_extension"
+
+          echo "project-filepath=$project_filepath" >> $GITHUB_OUTPUT
+          echo "project-version=$project_version" >> $GITHUB_OUTPUT
+          echo "project-name=$project_name" >> $GITHUB_OUTPUT
+          echo "rom-extension=$rom_extension" >> $GITHUB_OUTPUT

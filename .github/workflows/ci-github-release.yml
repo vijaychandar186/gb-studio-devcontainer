@@ -1,0 +1,100 @@
+# Originally from https://github.com/Pomdap/gb-studio-ci-example by Pomdap
+# Licensed under CC0 1.0 Universal (public domain) — see LICENSE
+name: Github release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  TARGET_LIST: 'rom, pocket, web'
+
+jobs:
+  set-target-list:
+    runs-on: ubuntu-latest
+    outputs:
+      target-list: ${{ steps.set-target-list.outputs.target-list }}
+    steps:
+      - id: set-target-list
+        run: echo "target-list=${TARGET_LIST}" >> "$GITHUB_OUTPUT"
+
+  validate-targets:
+    name: Validate target list
+    needs: set-target-list
+    uses: ./.github/workflows/utility-validate-target-list.yml
+    with:
+      target-list: ${{ needs.set-target-list.outputs.target-list }}
+    secrets: inherit
+
+  extract-project-configuration:
+    name: Extract project configuration
+    uses: ./.github/workflows/utility-extract-project-configuration.yml
+    secrets: inherit
+
+  build-ci-image:
+    name: Build CI image
+    needs: extract-project-configuration
+    uses: ./.github/workflows/build-ci-image.yml
+    with:
+      gb-studio-version: ${{ needs.extract-project-configuration.outputs.project-version }}
+    secrets: inherit
+    permissions:
+      contents: read
+      packages: write
+
+  build-targets:
+    name: 'Build ${{ matrix.target }}'
+    needs: [extract-project-configuration, validate-targets, build-ci-image]
+    uses: ./.github/workflows/utility-build-and-upload-artifact.yml
+    strategy:
+      matrix:
+        target: ${{ fromJson(needs.validate-targets.outputs.matrix) }}
+    with:
+      target: '${{ matrix.target }}'
+      project-filepath: '${{ needs.extract-project-configuration.outputs.project-filepath }}'
+      project-version: '${{ needs.extract-project-configuration.outputs.project-version }}'
+      artefact-name: >-
+        ${{ matrix.target == 'rom' && format('{0}.{1}', needs.extract-project-configuration.outputs.project-name, needs.extract-project-configuration.outputs.rom-extension)
+        || format('{0}.{1}', needs.extract-project-configuration.outputs.project-name, matrix.target) }}
+    secrets: inherit
+
+  create-github-release:
+    name: Create GitHub Release
+    needs: build-targets
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Display artifacts (debug)
+        run: ls -R dist
+
+      - name: Create GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG_NAME=${GITHUB_REF#refs/tags/}
+          gh release create "$TAG_NAME" --title "Release $TAG_NAME" --notes "Automated release for $TAG_NAME"
+
+          cd dist
+
+          for artifact in */; do
+            artifact=${artifact%/}
+            if [ -d "$artifact" ]; then
+              files=( "$artifact"/* )
+              if [ ${#files[@]} -eq 1 ] && [ -f "${files[0]}" ]; then
+                gh release upload "$TAG_NAME" "${files[0]}" --clobber
+              else
+                ( cd "$artifact" && zip -r "../${artifact}.zip" . )
+                gh release upload "$TAG_NAME" "${artifact}.zip" --clobber
+              fi
+            fi
+          done
