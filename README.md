@@ -149,9 +149,7 @@ Targets: `rom` (`.gb`/`.gbc`), `pocket`, `web`. Edit `TARGET_LIST` in the workfl
 
 ### First-time setup
 
-The build workflows depend on the CI Docker image being available in `ghcr.io`. On first push, `build-ci-image.yml` will build and push the image automatically. The `ci-main-branch.yml` run on the same push may fail since the image won't be ready yet — re-run it once the image build completes.
-
-To trigger the image build manually: **Actions → Build and push CI image → Run workflow**.
+No manual setup required. `ci-main-branch.yml` automatically builds the CI Docker image as part of the pipeline before building your targets — so the first push will just work.
 
 ### Configuration
 
@@ -164,6 +162,17 @@ For the itch.io workflow, set the following in your GitHub repo (**Settings → 
 | `ITCH_IO_API_KEY` | Secret | Your itch.io API key ([generate here](https://itch.io/user/settings/api-keys)) |
 
 > If you don't publish to itch.io, delete `ci-itchio-release.yml` — the other workflows need no configuration.
+
+### Deploying to itch.io
+
+Push a version tag to trigger the itch.io release workflow:
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+The workflow will build all targets and deploy them to your itch.io game page. The tag name is used as the version shown on itch.io.
 
 ---
 
