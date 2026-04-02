@@ -158,8 +158,12 @@ For the itch.io workflow, set the following in your GitHub repo (**Settings → 
 | Name | Type | Description |
 |---|---|---|
 | `ITCH_IO_USERNAME` | Variable | Your itch.io username |
-| `ITCH_IO_GAME` | Variable | Your itch.io game slug |
+| `ITCH_IO_GAME` | Variable | Your itch.io game slug (e.g. `test` from `https://username.itch.io/test`) |
 | `ITCH_IO_API_KEY` | Secret | Your itch.io API key ([generate here](https://itch.io/user/settings/api-keys)) |
+
+`ITCH_IO_USERNAME` and `ITCH_IO_GAME` must be added under the **Variables** tab, not Secrets. `ITCH_IO_API_KEY` goes under **Secrets**.
+
+> Your itch.io account email must be verified, otherwise uploads will fail.
 
 > If you don't publish to itch.io, delete `ci-itchio-release.yml` — the other workflows need no configuration.
 
